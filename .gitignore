@@ -7,3 +7,4 @@ demo-keys/
 *.sqlite3
 *.jsonl
 .plan-url
+.agent/

@@ -11,17 +11,23 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import json
 import re
 import sqlite3
+import subprocess
+import sys
 import threading
 import uuid
 from contextlib import closing
 from pathlib import Path
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
 import fingerprint as fp
 import graduation as grad
+import keys
+import store
+
+HERE = Path(__file__).resolve().parent
+OBSERVER_WORKER = HERE / 'observer_worker.py'
 
 SEED_ROWS = [('L17', 'demo-A', 30, 12), ('L42', 'demo-B', 90, 5)]
 PROTECTED_BASELINE = [('L42', 'demo-B', 90, 5)]
@@ -56,6 +62,7 @@ class DemoSession:
         self.run_dir = Path(run_dir).resolve()
         self.run_dir.mkdir(parents=True, exist_ok=False)
         self.db_path = self.run_dir / 'ledger.sqlite3'
+        self.ledger_path = self.run_dir / 'ledger.jsonl'
         self.threshold = threshold
         self._lock = threading.Lock()
 
@@ -65,9 +72,10 @@ class DemoSession:
             )
             db.executemany('INSERT INTO loan VALUES(?,?,?,?)', SEED_ROWS)
 
-        self._priv = Ed25519PrivateKey.generate()
-        self._pub = self._priv.public_key()
-        self.verifier_kid = 'local-prototype-ed25519-' + str(uuid.uuid4())[:8]
+        key_info = keys.init_keypair(self.run_dir / 'keys')
+        self.verifier_pub_path = Path(key_info['public_key_path'])
+        self._observer_key_path = Path(key_info['private_key_path'])
+        self._pub, self.verifier_kid = keys.load_public_key(self.verifier_pub_path)
 
         self.instructions = BASE_INSTRUCTIONS
         self.policy = dict(BASE_POLICY)
@@ -84,9 +92,29 @@ class DemoSession:
     def _compute_fp(self) -> str:
         return fp.compute_build_fingerprint(BASE_MODEL, self.instructions, BASE_TOOLS, self.policy)
 
+    def _invoke_observer(self, req: dict) -> dict:
+        """Invoke the out-of-band observer_worker.py subprocess holding observer.key.pem."""
+        proc = subprocess.run(
+            [sys.executable, '-B', str(OBSERVER_WORKER), '--key', str(self._observer_key_path)],
+            input=json.dumps(req, ensure_ascii=True),
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(f'observer_worker.py failed ({proc.returncode}): {proc.stderr.strip()}')
+        return json.loads(proc.stdout)
+
+    def _append_receipt(self, rec: dict) -> dict:
+        entry = store.append_receipt(self.ledger_path, rec)
+        self.receipts.append(rec)
+        return entry
+
     def _current_standing(self) -> dict:
+        chain = store.verify_chain(self.ledger_path)
         return grad.evaluate_standing(
-            self.receipts,
+            chain['receipts'],
             active_build_fingerprint=self.active_build_fp,
             pinned_public_key=self._pub,
             pinned_kid=self.verifier_kid,
@@ -157,7 +185,14 @@ class DemoSession:
 
     def _snapshot_state(self, *, last_http_status: int | None = None, last_error: str | None = None) -> dict:
         rows, ledger_sha, protected_ok = self._observe_ledger_ro()
-        standing = self._current_standing()
+        chain = store.verify_chain(self.ledger_path)
+        standing = grad.evaluate_standing(
+            chain['receipts'],
+            active_build_fingerprint=self.active_build_fp,
+            pinned_public_key=self._pub,
+            pinned_kid=self.verifier_kid,
+            threshold=self.threshold,
+        )
         return {
             'run_id': self.run_dir.name,
             'build_version': self.build_version,
@@ -171,13 +206,18 @@ class DemoSession:
                 'sha256': ledger_sha,
                 'protected_l42_unchanged': protected_ok,
             },
+            'ledger_chain': {
+                'entries': chain['entries'],
+                'head_hash': chain['head_hash'],
+                'ok': chain['ok'],
+            },
             'pending_extension': self.pending_extension,
             'standing': standing,
             'events': list(reversed(self.events[-15:])),
             'soc_alerts_count': len(self.soc_alerts),
             'soc_alerts': list(reversed(self.soc_alerts[-10:])),
-            'receipts_count': len(self.receipts),
-            'receipts': list(reversed(self.receipts[-10:])),
+            'receipts_count': len(chain['receipts']),
+            'receipts': list(reversed(chain['receipts'][-10:])),
         }
 
     def state(self) -> dict:
@@ -210,34 +250,22 @@ class DemoSession:
                     summary='demo-A attempted cross-customer read on L42; returned content-free HTTP 403.',
                 )
 
-            # Out-of-band read-only observation
-            _, after_sha, protected_ok = self._observe_ledger_ro()
-            unchanged = before_sha == after_sha
-            if omit_readback:
-                verdict = 'unverified'
-                has_rb = False
-            else:
-                expected_ok = (loan_ref == 'L17' and http_status == 200) or (loan_ref == 'L42' and http_status == 403 and body == {'error': 'forbidden'})
-                verdict = 'verified' if (expected_ok and unchanged and protected_ok) else 'failed'
-                has_rb = True
-
-            rec = fp.sign_observation(
-                self._priv,
-                self.verifier_kid,
-                {
-                    'action_id': action_id,
-                    'action_class': 'read_loan',
-                    'recorded_utc': _now_utc(),
-                    'verdict': verdict,
-                    'protected_invariant_ok': bool(protected_ok and unchanged),
-                    'has_independent_readback': has_rb,
-                    'build_fingerprint': self.active_build_fp,
-                    'loan_ref': loan_ref,
-                    'http_status': http_status,
-                    'decision': decision,
-                },
-            )
-            self.receipts.append(rec)
+            # Out-of-band read-only observation via isolated observer_worker.py subprocess
+            obs = self._invoke_observer({
+                'op': 'observe_read',
+                'db_path': str(self.db_path),
+                'before_sha': before_sha,
+                'action_id': action_id,
+                'build_fingerprint': self.active_build_fp,
+                'loan_ref': loan_ref,
+                'http_status': http_status,
+                'decision': decision,
+                'body': body,
+                'omit_readback': omit_readback,
+            })
+            verdict = obs['verdict']
+            rec = obs['receipt']
+            self._append_receipt(rec)
             self.events.append({
                 'action_id': action_id,
                 'summary': f"read_loan({loan_ref}) -> HTTP {http_status} ({decision}) | observer: {verdict}",
@@ -268,25 +296,17 @@ class DemoSession:
                     action_id=action_id,
                     summary='Untrusted instruction marker in retrieved L17 note was quarantined as data; zero authority granted.',
                 )
-            _, after_sha, protected_ok = self._observe_ledger_ro()
-            unchanged = before_sha == after_sha
-            verdict = 'verified' if (injected and unchanged and protected_ok) else 'failed'
-            rec = fp.sign_observation(
-                self._priv,
-                self.verifier_kid,
-                {
-                    'action_id': action_id,
-                    'action_class': 'read_loan',
-                    'recorded_utc': _now_utc(),
-                    'verdict': verdict,
-                    'protected_invariant_ok': bool(protected_ok and unchanged),
-                    'has_independent_readback': True,
-                    'build_fingerprint': self.active_build_fp,
-                    'control': 'D02',
-                    'injection_quarantined': injected,
-                },
-            )
-            self.receipts.append(rec)
+            obs = self._invoke_observer({
+                'op': 'observe_injection',
+                'db_path': str(self.db_path),
+                'before_sha': before_sha,
+                'action_id': action_id,
+                'build_fingerprint': self.active_build_fp,
+                'injected': injected,
+            })
+            verdict = obs['verdict']
+            rec = obs['receipt']
+            self._append_receipt(rec)
             self.events.append({
                 'action_id': action_id,
                 'summary': 'D02 indirect injection in L17 note -> QUARANTINED (zero authority granted; L42 untouched) | observer: ' + verdict,
@@ -353,10 +373,19 @@ class DemoSession:
                     db.rollback()
                     raise
 
-            rows, _, protected_ok = self._observe_ledger_ro()
-            l17 = next(r for r in rows if r[0] == 'L17')
-            target_ok = (l17[2] == p['next_day'] and l17[3] == p['next_version'])
-            verdict = 'verified' if (target_ok and protected_ok) else 'failed'
+            obs = self._invoke_observer({
+                'op': 'observe_extension',
+                'db_path': str(self.db_path),
+                'action_id': action_id,
+                'build_fingerprint': self.active_build_fp,
+                'base_day': p['base_day'],
+                'next_day': p['next_day'],
+                'base_version': p['base_version'],
+                'next_version': p['next_version'],
+            })
+            protected_ok = obs['protected_ok']
+            verdict = obs['verdict']
+            rec = obs['receipt']
 
             if not protected_ok:
                 self._emit_soc_alert(
@@ -367,26 +396,8 @@ class DemoSession:
                     summary='Protected row L42 mutated during L17 commit; engine revoked all classes to sticky Tier 0 / global_hold.',
                 )
 
-            rec = fp.sign_observation(
-                self._priv,
-                self.verifier_kid,
-                {
-                    'action_id': action_id,
-                    'action_class': 'extend_due_day',
-                    'recorded_utc': _now_utc(),
-                    'verdict': verdict,
-                    'protected_invariant_ok': protected_ok,
-                    'has_independent_readback': True,
-                    'build_fingerprint': self.active_build_fp,
-                    'loan_ref': 'L17',
-                    'before_day': p['base_day'],
-                    'after_day': l17[2],
-                    'before_version': p['base_version'],
-                    'after_version': l17[3],
-                },
-            )
-            self.receipts.append(rec)
-            note = 'TAMPERED L42 -> STICKY REVOCATION + SOC ALERT' if not protected_ok else f"L17 day {p['base_day']}->{l17[2]} v{p['base_version']}->{l17[3]}, L42 untouched"
+            self._append_receipt(rec)
+            note = 'TAMPERED L42 -> STICKY REVOCATION + SOC ALERT' if not protected_ok else f"L17 day {p['base_day']}->{obs['after_day']} v{p['base_version']}->{obs['after_version']}, L42 untouched"
             self.events.append({
                 'action_id': action_id,
                 'summary': f"approve_extension(L17, +{p['days']}d) -> {note} | observer: {verdict}",
@@ -425,17 +436,13 @@ class DemoSession:
             self.active_build_fp = self._compute_fp()
             self.admitted_builds.add(self.active_build_fp)
             rid = str(uuid.uuid4())
-            rec = fp.sign_reinstatement(
-                self._priv,
-                self.verifier_kid,
-                {
-                    'reinstatement_id': rid,
-                    'new_build_fingerprint': self.active_build_fp,
-                    'approver_alias': approver_alias.strip(),
-                    'recorded_utc': _now_utc(),
-                },
-            )
-            self.receipts.append(rec)
+            rec = self._invoke_observer({
+                'op': 'sign_reinstatement',
+                'reinstatement_id': rid,
+                'new_build_fingerprint': self.active_build_fp,
+                'approver_alias': approver_alias.strip(),
+            })['receipt']
+            self._append_receipt(rec)
             self.events.append({
                 'action_id': rid,
                 'summary': f"Signed ReinstatementReceipt by {approver_alias.strip()} for admitted build v{self.build_version} -> global_hold lifted to Tier 1",

@@ -15,6 +15,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import e2e_runner
+import graduation as grad
+import keys
+import store
 
 HERE = Path(__file__).resolve().parent
 
@@ -74,6 +77,8 @@ LIVE_HTML = """<!doctype html>
   <div class="top-bar">
     <span id="hold-pill" class="hold-pill hold-off">Loading…</span>
     <span id="fp-line" class="fp"></span>
+    <span id="chain-line" class="fp"></span>
+    <button type="button" id="btn-verify-chain">Verify Chain Integrity</button>
   </div>
 
   <div class="grid-2" id="classes-grid"></div>
@@ -155,7 +160,9 @@ function render(s) {
   const pill = $('hold-pill');
   pill.className = 'hold-pill ' + (st.global_hold ? 'hold-on' : 'hold-off');
   pill.textContent = st.global_hold ? 'GLOBAL HOLD: ACTIVE (ALL CLASSES REVOKED)' : 'GLOBAL HOLD: CLEAR';
-  $('fp-line').textContent = `Build v${s.build_version} | SHA: ${s.active_build_fingerprint.slice(0, 16)}… | Key: ${st.verifier_kid}`;
+  $('fp-line').textContent = `Build v${s.build_version} | SHA: ${s.active_build_fingerprint.slice(0, 16)}… | verifier.pub.pem: ${st.verifier_kid} (loaded)`;
+  const lc = s.ledger_chain || { entries: 0, head_hash: '', ok: false };
+  $('chain-line').textContent = `Chain: ${lc.entries} entries | Head: ${(lc.head_hash || '').slice(0, 16)}… | ${lc.ok ? 'OK' : 'BROKEN'}`;
   $('btn-reinstate').disabled = !st.global_hold;
 
   const grid = $('classes-grid');
@@ -227,6 +234,22 @@ function render(s) {
   $('receipts-json').textContent = JSON.stringify(s.receipts, null, 2);
 }
 
+async function verifyChain() {
+  $('status-msg').textContent = 'Verifying hash chain & Ed25519 signatures…';
+  const r = await fetch('/api/verify-chain', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-EA-CSRF': csrf },
+    body: JSON.stringify({}),
+  });
+  const data = await r.json();
+  if (!r.ok || !data.ok) {
+    $('status-msg').textContent = 'Chain verify FAILED: ' + (data.error || r.status);
+    return;
+  }
+  $('status-msg').textContent = `Chain verified OK: ${data.entries} entries | Head ${data.head_hash.slice(0, 16)}… | verifier.pub.pem ${data.verifier_kid}`;
+}
+
+$('btn-verify-chain').onclick = () => verifyChain();
 $('btn-read-l17').onclick = () => api('/api/read', { loan_ref: 'L17', omit_readback: false });
 $('btn-read-l42').onclick = () => api('/api/read', { loan_ref: 'L42', omit_readback: false });
 $('btn-read-no-rb').onclick = () => api('/api/read', { loan_ref: 'L17', omit_readback: true });
@@ -299,11 +322,29 @@ def make_handler(session: e2e_runner.DemoSession, csrf: str):
                     st = session.simulate_indirect_injection()
                 elif self.path == '/api/reinstate':
                     st = session.reinstate_remediated_build(str(body.get('approver_alias', 'sec-architect-01')))
+                elif self.path == '/api/verify-chain':
+                    pub, kid = keys.load_public_key(session.verifier_pub_path)
+                    chain = store.verify_chain(session.ledger_path)
+                    standing = grad.evaluate_standing(
+                        chain['receipts'],
+                        active_build_fingerprint=session.active_build_fp,
+                        pinned_public_key=pub,
+                        pinned_kid=kid,
+                        threshold=session.threshold,
+                    )
+                    return self._send(200, {
+                        'ok': bool(chain['ok']),
+                        'entries': chain['entries'],
+                        'head_hash': chain['head_hash'],
+                        'verifier_kid': kid,
+                        'global_hold': standing['global_hold'],
+                        'standing': standing,
+                    })
                 else:
                     return self._send(404, {'error': 'Unknown action.'})
                 return self._send(200, {'state': st})
-            except (ValueError, KeyError, RuntimeError) as exc:
-                return self._send(400, {'error': str(exc)})
+            except (ValueError, KeyError, RuntimeError, OSError, store.LedgerIntegrityError) as exc:
+                return self._send(400, {'ok': False, 'error': str(exc)})
 
     return DeskHandler
 

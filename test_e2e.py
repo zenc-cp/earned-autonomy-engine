@@ -11,8 +11,13 @@ from contextlib import closing
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 import e2e_runner
+import fingerprint as fp
+import keys
 import live_desk
+import store
 
 
 class E2ESessionSpec(unittest.TestCase):
@@ -97,6 +102,65 @@ class E2ESessionSpec(unittest.TestCase):
         self.assertEqual(blocked['last_error'], 'release_not_admitted')
         self.assertTrue(any(a['control_id'] == 'D01' for a in blocked['soc_alerts']))
 
+    def test_ledger_chain_persists_receipts_and_tamper_fails_closed(self):
+        st0 = self.sess.state()
+        self.assertEqual(st0['ledger_chain']['entries'], 0)
+        self.assertEqual(st0['ledger_chain']['head_hash'], store.GENESIS_HASH)
+        self.assertTrue(st0['ledger_chain']['ok'])
+
+        st1 = self.sess.execute_read('L17')
+        self.assertTrue(self.sess.ledger_path.exists())
+        self.assertEqual(st1['ledger_chain']['entries'], 1)
+        self.assertNotEqual(st1['ledger_chain']['head_hash'], store.GENESIS_HASH)
+        self.assertTrue(st1['ledger_chain']['ok'])
+
+        # Exercise ReinstatementReceipt persistence as well
+        held = self.sess.propose_extension('L17', 7)
+        self.sess.approve_extension(held['pending_extension']['pending_id'], tamper_protected_l42=True)
+        st3 = self.sess.reinstate_remediated_build('sec-architect-01')
+        self.assertEqual(st3['ledger_chain']['entries'], 3)
+        self.assertTrue(st3['ledger_chain']['ok'])
+
+        # Tamper a single byte in ledger.jsonl -> DemoSession must fail closed
+        raw = self.sess.ledger_path.read_text(encoding='utf-8')
+        tampered = raw.replace('"loan_ref":"L17"', '"loan_ref":"L99"', 1)
+        self.assertNotEqual(raw, tampered)
+        self.sess.ledger_path.write_text(tampered, encoding='utf-8')
+
+        with self.assertRaises(store.LedgerIntegrityError):
+            self.sess.state()
+        with self.assertRaises(store.LedgerIntegrityError):
+            self.sess.execute_read('L17')
+
+    def test_observer_subprocess_key_isolation_and_verifier_pub_verification(self):
+        # DemoSession must never hold an Ed25519PrivateKey in memory or expose _priv
+        self.assertFalse(hasattr(self.sess, '_priv'))
+        for attr_name, attr_val in vars(self.sess).items():
+            self.assertNotIsInstance(
+                attr_val,
+                Ed25519PrivateKey,
+                f'DemoSession.{attr_name} must not hold an Ed25519PrivateKey',
+            )
+
+        # Keypair was generated on disk under run_dir/keys
+        pub_path = self.sess.run_dir / 'keys' / 'verifier.pub.pem'
+        priv_path = self.sess.run_dir / 'keys' / 'observer.key.pem'
+        self.assertTrue(pub_path.exists())
+        self.assertTrue(priv_path.exists())
+
+        pub, kid = keys.load_public_key(pub_path)
+        self.assertEqual(self.sess.verifier_kid, kid)
+
+        # Subprocess observer signs a real read receipt that verifies strictly under verifier.pub.pem
+        st = self.sess.execute_read('L17')
+        self.assertEqual(st['receipts_count'], 1)
+        rec = st['receipts'][0]
+        self.assertTrue(fp.verify_receipt(pub, kid, rec))
+
+        # A rogue public key must reject the receipt
+        rogue_pub = Ed25519PrivateKey.generate().public_key()
+        self.assertFalse(fp.verify_receipt(rogue_pub, kid, rec))
+
 
 class LiveDeskHttpSpec(unittest.TestCase):
     def setUp(self):
@@ -135,6 +199,53 @@ class LiveDeskHttpSpec(unittest.TestCase):
         code, doc = self._post('/api/read', {'loan_ref': 'L17'})
         self.assertEqual(code, 200)
         self.assertEqual(doc['state']['standing']['classes']['read_loan']['consecutive_verified'], 1)
+
+    def test_verify_chain_endpoint_and_ui_elements(self):
+        # Verify GET / includes top-bar chain display, verifier.pub.pem status, and Verify Chain Integrity button
+        c = http.client.HTTPConnection('127.0.0.1', self.port, timeout=5)
+        try:
+            c.request('GET', '/')
+            r = c.getresponse()
+            html = r.read().decode('utf-8')
+            self.assertEqual(r.status, 200)
+            self.assertIn('id="chain-line"', html)
+            self.assertIn('id="btn-verify-chain"', html)
+            self.assertIn('Verify Chain Integrity', html)
+            self.assertIn('verifier.pub.pem', html)
+        finally:
+            c.close()
+
+        # Genesis verification before any reads
+        code0, v0 = self._post('/api/verify-chain', {})
+        self.assertEqual(code0, 200)
+        self.assertTrue(v0['ok'])
+        self.assertEqual(v0['entries'], 0)
+        self.assertEqual(v0['head_hash'], store.GENESIS_HASH)
+        self.assertEqual(v0['verifier_kid'], self.sess.verifier_kid)
+
+        # Perform 2 reads -> POST /api/verify-chain returns 200 with ok=True and entries=2
+        self.assertEqual(self._post('/api/read', {'loan_ref': 'L17'})[0], 200)
+        code_r2, doc_r2 = self._post('/api/read', {'loan_ref': 'L42'})
+        self.assertEqual(code_r2, 200)
+        expected_head = doc_r2['state']['ledger_chain']['head_hash']
+
+        code2, v2 = self._post('/api/verify-chain', {})
+        self.assertEqual(code2, 200)
+        self.assertTrue(v2['ok'])
+        self.assertEqual(v2['entries'], 2)
+        self.assertEqual(v2['head_hash'], expected_head)
+        self.assertEqual(v2['verifier_kid'], self.sess.verifier_kid)
+        self.assertEqual(v2['standing']['classes']['read_loan']['consecutive_verified'], 2)
+
+        # Tamper ledger.jsonl -> POST /api/verify-chain fails closed with 400 and ok=False
+        raw = self.sess.ledger_path.read_text(encoding='utf-8')
+        tampered = raw.replace('"loan_ref":"L17"', '"loan_ref":"L99"', 1)
+        self.assertNotEqual(raw, tampered)
+        self.sess.ledger_path.write_text(tampered, encoding='utf-8')
+
+        code_bad, v_bad = self._post('/api/verify-chain', {})
+        self.assertEqual(code_bad, 400)
+        self.assertFalse(v_bad['ok'])
 
 
 if __name__ == '__main__':
