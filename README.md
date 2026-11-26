@@ -7,6 +7,12 @@ A standalone, domain-portable, post-run evidence verification and autonomy-gradu
 Pre-action gateways and policy engines answer **"Was the agent allowed to attempt this action?"**
 Earned Autonomy answers the missing post-run question: **"Does independent, out-of-band evidence prove the intended system-of-record change happened and protected non-target state stayed untouched — and should this specific action class earn or lose autonomy?"**
 
+## Architecture
+
+![Two-Plane Earned Autonomy Graduation Engine Architecture](docs/architecture.png)
+
+Open the standalone interactive HTML version at [`docs/architecture.html`](docs/architecture.html) (or vector source [`docs/architecture.svg`](docs/architecture.svg)).
+
 ## Core Primitives
 
 - **Build Fingerprinting (`fingerprint.py`):** Deterministic `SHA-256(model + instructions + tools + policy)`. Changing a single character in the prompt or adding a tool marks prior `Verified` receipts **`STALE`** and auto-demotes `Tier 2 -> Tier 1`.
@@ -16,12 +22,18 @@ Earned Autonomy answers the missing post-run question: **"Does independent, out-
 - **Portable Domain Contracts (`contracts.py`):** Ships with `contracts/banking-loan.json` and `contracts/it-access.json` to demonstrate domain independence.
 - **Offline Graduation Desk & Live Local Demo (`cli.py`, `e2e_runner.py`, `live_desk.py`):** Zero-network single-source-of-truth HTML desk and interactive loopback demo on a disposable SQLite ledger.
 
+## Documentation & Demo Guides
+
+- **Architecture Diagram:** [`docs/architecture.html`](docs/architecture.html) · [`docs/architecture.svg`](docs/architecture.svg) · [`docs/architecture.png`](docs/architecture.png)
+- **Operations Runbook:** [`docs/operations-runbook.md`](docs/operations-runbook.md) (onboarding, `STALE` / `Unverified` / `Tier 0 global_hold` response, key rotation)
+- **20-Min Pitch & 10-Min Demo Script:** [`docs/pitch-and-demo-script.md`](docs/pitch-and-demo-script.md)
+
 ## Quick Start
 
-Requires Python 3.11+ and `cryptography`.
+Requires Python 3.11+ and `cryptography` (`pip install -r requirements.txt`).
 
 ```bash
-# 1. Run the full 15-test verification suite
+# 1. Run the full 16-test verification suite (engine, D01-D07 E2E, hash-chain & IT portability)
 python -B -m unittest -v test_engine test_e2e test_engine_core
 
 # 2. Build the offline single-source Graduation Desk (desk.html)

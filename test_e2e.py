@@ -69,16 +69,33 @@ class E2ESessionSpec(unittest.TestCase):
         self.assertEqual(revoked['standing']['classes']['extend_due_day']['tier'], 'Tier 0 (REVOKED / HOLD)')
         self.assertEqual(revoked['standing']['classes']['read_loan']['tier'], 'Tier 0 (REVOKED / HOLD)')
 
-        # 4. Subsequent clean read cannot auto-recover while global_hold is active
-        still_held = self.sess.execute_read('L17')['standing']
-        self.assertTrue(still_held['global_hold'])
-        self.assertEqual(still_held['classes']['read_loan']['tier'], 'Tier 0 (REVOKED / HOLD)')
+        # 4. Subsequent clean read is actively BLOCKED (HTTP 403) while global_hold is active (F-02)
+        still_held = self.sess.execute_read('L17')
+        self.assertEqual(still_held['last_http_status'], 403)
+        self.assertEqual(still_held['last_error'], 'autonomy_revoked_global_hold')
+        self.assertTrue(still_held['standing']['global_hold'])
+        self.assertEqual(still_held['standing']['classes']['read_loan']['tier'], 'Tier 0 (REVOKED / HOLD)')
+        self.assertGreaterEqual(still_held['soc_alerts_count'], 2)
 
         # 5. Remediated build + signed reinstatement restores Tier 1 (not Tier 2)
         reinstated = self.sess.reinstate_remediated_build('sec-architect-01')['standing']
         self.assertFalse(reinstated['global_hold'])
         self.assertEqual(reinstated['classes']['read_loan']['tier'], 'Tier 1 (Human-Approved)')
         self.assertEqual(reinstated['classes']['extend_due_day']['tier'], 'Tier 1 (Human-Approved)')
+
+    def test_d01_unadmitted_release_blocked_and_d02_indirect_injection_quarantined_with_d04_soc_alerts(self):
+        # D02: Indirect prompt injection in retrieved note is quarantined with zero authority + D04 alert
+        inj = self.sess.simulate_indirect_injection()
+        self.assertEqual(inj['last_http_status'], 200)
+        self.assertEqual(self._rows(), [('L17', 'demo-A', 30, 12), ('L42', 'demo-B', 90, 5)])
+        self.assertTrue(any(a['control_id'] == 'D02' for a in inj['soc_alerts']))
+
+        # D01: Unadmitted rogue build fingerprint is blocked before serving (HTTP 403) + D01 alert
+        self.sess.edit_prompt_drift(' [rogue-unadmitted]', admit_release=False)
+        blocked = self.sess.execute_read('L17')
+        self.assertEqual(blocked['last_http_status'], 403)
+        self.assertEqual(blocked['last_error'], 'release_not_admitted')
+        self.assertTrue(any(a['control_id'] == 'D01' for a in blocked['soc_alerts']))
 
 
 class LiveDeskHttpSpec(unittest.TestCase):

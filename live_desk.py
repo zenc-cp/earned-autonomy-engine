@@ -89,6 +89,8 @@ LIVE_HTML = """<!doctype html>
       <div class="actions">
         <button type="button" id="btn-propose">Propose +7d Extension on L17 (202 Hold)</button>
         <button type="button" class="warn" id="btn-drift">Edit Prompt (+1 Drift -> STALE)</button>
+        <button type="button" class="warn" id="btn-unadmitted">Stage Unadmitted Build (D01 Block)</button>
+        <button type="button" class="warn" id="btn-inject">Simulate Indirect Injection (D02)</button>
         <button type="button" class="accent" id="btn-reinstate" disabled>Reinstate on New Build (Tier 1)</button>
       </div>
       <div id="pending-slot"></div>
@@ -108,6 +110,11 @@ LIVE_HTML = """<!doctype html>
     <h2>3. Live Event &amp; Observer Log</h2>
     <ul id="events-list" class="events"></ul>
   </section>
+
+  <details>
+    <summary id="soc-summary">Inspect Correlated SOC Alerts (D04 · local JSON)</summary>
+    <pre id="soc-json"></pre>
+  </details>
 
   <details>
     <summary id="receipts-summary">Inspect Raw Ed25519-Signed Receipts</summary>
@@ -214,6 +221,8 @@ function render(s) {
     evList.append(li);
   }
 
+  $('soc-summary').textContent = `Inspect Correlated SOC Alerts (${s.soc_alerts_count || 0} total · D04 local JSON)`;
+  $('soc-json').textContent = JSON.stringify(s.soc_alerts || [], null, 2);
   $('receipts-summary').textContent = `Inspect Raw Ed25519-Signed Receipts (${s.receipts_count} total)`;
   $('receipts-json').textContent = JSON.stringify(s.receipts, null, 2);
 }
@@ -222,7 +231,9 @@ $('btn-read-l17').onclick = () => api('/api/read', { loan_ref: 'L17', omit_readb
 $('btn-read-l42').onclick = () => api('/api/read', { loan_ref: 'L42', omit_readback: false });
 $('btn-read-no-rb').onclick = () => api('/api/read', { loan_ref: 'L17', omit_readback: true });
 $('btn-propose').onclick = () => api('/api/propose', { loan_ref: 'L17', days: 7 });
-$('btn-drift').onclick = () => api('/api/drift', { suffix: ' [edited]' });
+$('btn-drift').onclick = () => api('/api/drift', { suffix: ' [edited]', admit_release: true });
+$('btn-unadmitted').onclick = () => api('/api/drift', { suffix: ' [unadmitted]', admit_release: false });
+$('btn-inject').onclick = () => api('/api/inject', {});
 $('btn-reinstate').onclick = () => api('/api/reinstate', { approver_alias: 'sec-architect-01' });
 
 api('/api/state');
@@ -283,7 +294,9 @@ def make_handler(session: e2e_runner.DemoSession, csrf: str):
                 elif self.path == '/api/approve':
                     st = session.approve_extension(body['pending_id'], tamper_protected_l42=bool(body.get('tamper_l42')))
                 elif self.path == '/api/drift':
-                    st = session.edit_prompt_drift(str(body.get('suffix', ' [edited]')))
+                    st = session.edit_prompt_drift(str(body.get('suffix', ' [edited]')), admit_release=bool(body.get('admit_release', True)))
+                elif self.path == '/api/inject':
+                    st = session.simulate_indirect_injection()
                 elif self.path == '/api/reinstate':
                     st = session.reinstate_remediated_build(str(body.get('approver_alias', 'sec-architect-01')))
                 else:

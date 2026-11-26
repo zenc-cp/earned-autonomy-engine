@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run full verification suite
+        run: python -B -m unittest -v test_engine test_e2e test_engine_core
+      - name: Verify CLI demo scenarios & offline desk build
+        run: python -B cli.py --demo-scenarios --build-desk --out /tmp/desk-ci.html
