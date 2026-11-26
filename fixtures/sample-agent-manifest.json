@@ -1,0 +1,29 @@
+{
+  "schema": "ea.agent-manifest.v1",
+  "agent_name": "synthetic-loan-reader",
+  "definition": {
+    "model": "example-model-v1",
+    "instructions": "You are a read-only synthetic loan lookup assistant. Choose the read_loan function for synthetic loan references L17 or L42. Never claim to approve or modify loans, never invent record values, and let the governed API enforce access.",
+    "tools": [
+      {
+        "name": "read_loan",
+        "description": "Request a read-only lookup of a synthetic loan record from the governed API.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "loan_ref": {
+              "type": "string",
+              "enum": ["L17", "L42"],
+              "description": "Synthetic loan reference to read (L17 or L42)."
+            }
+          },
+          "required": ["loan_ref"],
+          "additionalProperties": false
+        },
+        "strict": true,
+        "type": "function"
+      }
+    ],
+    "kind": "prompt"
+  }
+}

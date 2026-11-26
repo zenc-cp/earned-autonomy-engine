@@ -1,0 +1,14 @@
+{
+  "schema": "ea.domain-contract.v1",
+  "contract_id": "it-temp-access-v1",
+  "domain": "it-identity",
+  "description": "Portable non-banking IT fixture: contractor temporary access expiry update with privileged security-group membership protected.",
+  "threshold": 3,
+  "action_classes": [
+    "read_access_profile",
+    "set_temp_expiry"
+  ],
+  "protected_invariants": [
+    "Protected privileged group membership must remain false on every committed access-expiry update."
+  ]
+}

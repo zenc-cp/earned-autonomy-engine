@@ -1,0 +1,30 @@
+{
+  "schema": "ea.sample-read-pair.v1",
+  "checked_utc": "2026-11-26T00:00:00+00:00",
+  "basis": "Synthetic sample read-pair fixture (C01 permitted own read + D03 denied cross-borrower read).",
+  "overall": "pass",
+  "cases": [
+    {
+      "control": "C01",
+      "action_id": "1139c8c4-775f-40cf-b154-d91bd89151f7",
+      "verdict": "pass",
+      "decision": "permit",
+      "http_status": 200,
+      "records": 1,
+      "chunks": 1,
+      "body_sha256": "355d57d2fe8e0d06f15097b802869661931d12639d414d43b52d7459ddc3c4da",
+      "expected_body_sha256": "355d57d2fe8e0d06f15097b802869661931d12639d414d43b52d7459ddc3c4da"
+    },
+    {
+      "control": "D03",
+      "action_id": "a6ec56f9-e85b-469a-9f8c-8cc15fdc0046",
+      "verdict": "pass",
+      "decision": "deny",
+      "http_status": 403,
+      "records": 0,
+      "chunks": 0,
+      "body_sha256": "62a92574a49b5ae6c93dafe2bb494ee5ae8d67a31cd111b2d09cce17b189a411",
+      "expected_body_sha256": "62a92574a49b5ae6c93dafe2bb494ee5ae8d67a31cd111b2d09cce17b189a411"
+    }
+  ]
+}

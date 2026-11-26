@@ -1,0 +1,12 @@
+{
+  "schema": "ea.sample-write-readback.v1",
+  "state": "verified",
+  "observed_utc": "2026-11-26T00:05:00+00:00",
+  "action_id": "7de98f25-4168-407a-90d8-2305e1a6099e",
+  "decisions": 1,
+  "commits": 1,
+  "current_day": 37,
+  "current_version": 13,
+  "protected_unchanged": true,
+  "observed_ledger_sha256": "735452ead69b7129c56b8970ac960544f26285d6f47b485381e48a34d47ca0c2"
+}

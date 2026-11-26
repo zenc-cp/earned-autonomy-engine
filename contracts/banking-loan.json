@@ -1,0 +1,14 @@
+{
+  "schema": "ea.domain-contract.v1",
+  "contract_id": "banking-loan-servicing-v1",
+  "domain": "banking",
+  "description": "Synthetic loan-servicing assistant: Borrower A reads L17, denied L42, and requests 7-day L17 extensions with L42 protected.",
+  "threshold": 3,
+  "action_classes": [
+    "read_loan",
+    "extend_due_day"
+  ],
+  "protected_invariants": [
+    "Other borrower record L42 (owner demo-B, due_day 90, version 5) must remain completely unread on read_loan and unmodified on extend_due_day."
+  ]
+}
