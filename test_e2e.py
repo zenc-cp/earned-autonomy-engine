@@ -123,7 +123,7 @@ class E2ESessionSpec(unittest.TestCase):
 
         # Tamper a single byte in ledger.jsonl -> DemoSession must fail closed
         raw = self.sess.ledger_path.read_text(encoding='utf-8')
-        tampered = raw.replace('"loan_ref":"L17"', '"loan_ref":"L99"', 1)
+        tampered = raw.replace('"target_ref":"L17"', '"target_ref":"L99"', 1)
         self.assertNotEqual(raw, tampered)
         self.sess.ledger_path.write_text(tampered, encoding='utf-8')
 
@@ -239,13 +239,47 @@ class LiveDeskHttpSpec(unittest.TestCase):
 
         # Tamper ledger.jsonl -> POST /api/verify-chain fails closed with 400 and ok=False
         raw = self.sess.ledger_path.read_text(encoding='utf-8')
-        tampered = raw.replace('"loan_ref":"L17"', '"loan_ref":"L99"', 1)
+        tampered = raw.replace('"target_ref":"L17"', '"target_ref":"L99"', 1)
         self.assertNotEqual(raw, tampered)
         self.sess.ledger_path.write_text(tampered, encoding='utf-8')
 
         code_bad, v_bad = self._post('/api/verify-chain', {})
         self.assertEqual(code_bad, 400)
         self.assertFalse(v_bad['ok'])
+
+    def test_live_domain_switcher_and_pluggable_signer_interface(self):
+        import signers
+
+        # 1. Pluggable signer interface: LocalEd25519Signer verifies, KeyVaultSignerStub fails closed
+        kv = signers.KeyVaultSignerStub('https://example-vault.vault.azure.net', 'ea-verifier')
+        self.assertIsInstance(kv, signers.ReceiptSigner)
+        with self.assertRaises(signers.SignerUnavailableError):
+            kv.sign_bytes(b'test')
+
+        # 2. Switch live desk from banking -> it-identity and verify independent IT ledger & contract
+        code_sw, sw_doc = self._post('/api/switch-domain', {'domain': 'it-identity'})
+        self.assertEqual(code_sw, 200)
+        st = sw_doc['state']
+        self.assertEqual(st['domain'], 'it-identity')
+        self.assertEqual(st['target_ref'], 'CONT-17')
+        self.assertEqual(st['other_ref'], 'ADMIN-42')
+        self.assertIn('read_access_profile', st['standing']['classes'])
+        self.assertIn('set_temp_expiry', st['standing']['classes'])
+
+        # 3. Execute 3 IT reads -> read_access_profile graduates to Tier 2, set_temp_expiry stays Tier 1
+        self.assertEqual(self._post('/api/read', {'loan_ref': 'CONT-17'})[0], 200)
+        self.assertEqual(self._post('/api/read', {'loan_ref': 'ADMIN-42'})[0], 200)
+        code3, doc3 = self._post('/api/read', {'loan_ref': 'CONT-17'})
+        self.assertEqual(code3, 200)
+        self.assertEqual(doc3['state']['standing']['classes']['read_access_profile']['tier'], 'Tier 2 (Bounded Pilot)')
+        self.assertEqual(doc3['state']['standing']['classes']['set_temp_expiry']['tier'], 'Tier 1 (Human-Approved)')
+
+        # 4. IT verify-chain passes independently
+        code_v, v_doc = self._post('/api/verify-chain', {})
+        self.assertEqual(code_v, 200)
+        self.assertTrue(v_doc['ok'])
+        self.assertEqual(v_doc['domain'], 'it-identity')
+        self.assertEqual(v_doc['entries'], 3)
 
 
 if __name__ == '__main__':

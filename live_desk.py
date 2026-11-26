@@ -75,7 +75,11 @@ LIVE_HTML = """<!doctype html>
   <div id="status-msg" role="status" aria-live="polite"></div>
 
   <div class="top-bar">
-    <span id="hold-pill" class="hold-pill hold-off">Loading…</span>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <button type="button" id="btn-dom-banking" class="primary">Banking · Loan Servicing</button>
+      <button type="button" id="btn-dom-it">IT Identity · Temporary Access</button>
+      <span id="hold-pill" class="hold-pill hold-off">Loading…</span>
+    </div>
     <span id="fp-line" class="fp"></span>
     <span id="chain-line" class="fp"></span>
     <button type="button" id="btn-verify-chain">Verify Chain Integrity</button>
@@ -157,10 +161,19 @@ async function api(path, body) {
 
 function render(s) {
   const st = s.standing;
+  const targetRef = s.target_ref || 'L17';
+  const otherRef = s.other_ref || 'L42';
+  $('btn-dom-banking').className = s.domain === 'banking' ? 'primary' : '';
+  $('btn-dom-it').className = s.domain === 'it-identity' ? 'primary' : '';
+  $('btn-read-l17').textContent = `Read ${targetRef} (Own -> 200)`;
+  $('btn-read-l42').textContent = `Read ${otherRef} (Other -> 403)`;
+  $('btn-read-no-rb').textContent = `Read ${targetRef} (Omit Readback -> Unverified)`;
+  $('btn-propose').textContent = `Propose +7d Update on ${targetRef} (202 Hold)`;
+
   const pill = $('hold-pill');
   pill.className = 'hold-pill ' + (st.global_hold ? 'hold-on' : 'hold-off');
   pill.textContent = st.global_hold ? 'GLOBAL HOLD: ACTIVE (ALL CLASSES REVOKED)' : 'GLOBAL HOLD: CLEAR';
-  $('fp-line').textContent = `Build v${s.build_version} | SHA: ${s.active_build_fingerprint.slice(0, 16)}… | verifier.pub.pem: ${st.verifier_kid} (loaded)`;
+  $('fp-line').textContent = `${s.domain_label || s.domain} | Build v${s.build_version} | SHA: ${s.active_build_fingerprint.slice(0, 16)}… | verifier.pub.pem: ${st.verifier_kid} (loaded)`;
   const lc = s.ledger_chain || { entries: 0, head_hash: '', ok: false };
   $('chain-line').textContent = `Chain: ${lc.entries} entries | Head: ${(lc.head_hash || '').slice(0, 16)}… | ${lc.ok ? 'OK' : 'BROKEN'}`;
   $('btn-reinstate').disabled = !st.global_hold;
@@ -193,7 +206,7 @@ function render(s) {
     }
     tbody.append(tr);
   }
-  $('ledger-meta').textContent = `Protected L42 unchanged: ${s.ledger.protected_l42_unchanged} | Ledger SHA: ${s.ledger.sha256.slice(0, 16)}…`;
+  $('ledger-meta').textContent = `Protected ${otherRef} unchanged: ${s.ledger.protected_unchanged} | Ledger SHA: ${s.ledger.sha256.slice(0, 16)}…`;
 
   const pSlot = $('pending-slot');
   pSlot.replaceChildren();
@@ -202,7 +215,7 @@ function render(s) {
     const box = document.createElement('div');
     box.className = 'pending-box';
     const txt = document.createElement('p');
-    txt.textContent = `Pending 202 HOLD: extend ${p.loan_ref} by +${p.days}d (Day ${p.base_day} v${p.base_version} -> Day ${p.next_day} v${p.next_version})`;
+    txt.textContent = `Pending 202 HOLD: update ${p.loan_ref} by +${p.days}d (Day ${p.base_day} v${p.base_version} -> Day ${p.next_day} v${p.next_version})`;
     const row = document.createElement('div');
     row.className = 'actions';
     const okBtn = document.createElement('button');
@@ -213,7 +226,7 @@ function render(s) {
     const badBtn = document.createElement('button');
     badBtn.type = 'button';
     badBtn.className = 'danger';
-    badBtn.textContent = 'Approve + Tamper L42 (Fault Injection)';
+    badBtn.textContent = `Approve + Tamper ${otherRef} (Fault Injection)`;
     badBtn.onclick = () => api('/api/approve', { pending_id: p.pending_id, tamper_l42: true });
     row.append(okBtn, badBtn);
     box.append(txt, row);
@@ -249,11 +262,13 @@ async function verifyChain() {
   $('status-msg').textContent = `Chain verified OK: ${data.entries} entries | Head ${data.head_hash.slice(0, 16)}… | verifier.pub.pem ${data.verifier_kid}`;
 }
 
+$('btn-dom-banking').onclick = () => api('/api/switch-domain', { domain: 'banking' });
+$('btn-dom-it').onclick = () => api('/api/switch-domain', { domain: 'it-identity' });
 $('btn-verify-chain').onclick = () => verifyChain();
-$('btn-read-l17').onclick = () => api('/api/read', { loan_ref: 'L17', omit_readback: false });
-$('btn-read-l42').onclick = () => api('/api/read', { loan_ref: 'L42', omit_readback: false });
-$('btn-read-no-rb').onclick = () => api('/api/read', { loan_ref: 'L17', omit_readback: true });
-$('btn-propose').onclick = () => api('/api/propose', { loan_ref: 'L17', days: 7 });
+$('btn-read-l17').onclick = () => api('/api/read', { loan_ref: (latest && latest.target_ref) || 'L17', omit_readback: false });
+$('btn-read-l42').onclick = () => api('/api/read', { loan_ref: (latest && latest.other_ref) || 'L42', omit_readback: false });
+$('btn-read-no-rb').onclick = () => api('/api/read', { loan_ref: (latest && latest.target_ref) || 'L17', omit_readback: true });
+$('btn-propose').onclick = () => api('/api/propose', { loan_ref: (latest && latest.target_ref) || 'L17', days: 7 });
 $('btn-drift').onclick = () => api('/api/drift', { suffix: ' [edited]', admit_release: true });
 $('btn-unadmitted').onclick = () => api('/api/drift', { suffix: ' [unadmitted]', admit_release: false });
 $('btn-inject').onclick = () => api('/api/inject', {});
@@ -267,6 +282,12 @@ api('/api/state');
 
 
 def make_handler(session: e2e_runner.DemoSession, csrf: str):
+    sessions_by_domain: dict[str, e2e_runner.DemoSession] = {session.domain: session}
+    active = {'domain': session.domain}
+
+    def current_session() -> e2e_runner.DemoSession:
+        return sessions_by_domain[active['domain']]
+
     class DeskHandler(BaseHTTPRequestHandler):
         def log_message(self, *args):
             return
@@ -295,7 +316,7 @@ def make_handler(session: e2e_runner.DemoSession, csrf: str):
             if self.path == '/':
                 return self._send(200, LIVE_HTML.encode('utf-8'), 'text/html; charset=utf-8')
             if self.path == '/api/state':
-                return self._send(200, {'csrf': csrf, 'state': session.state()})
+                return self._send(200, {'csrf': csrf, 'state': current_session().state()})
             return self._send(404, {'error': 'Not found.'})
 
         def do_POST(self):
@@ -310,30 +331,45 @@ def make_handler(session: e2e_runner.DemoSession, csrf: str):
                 if not (0 < n <= 4096):
                     raise ValueError('Invalid body length.')
                 body = json.loads(self.rfile.read(n))
+                sess = current_session()
+                if self.path == '/api/switch-domain':
+                    dom = body.get('domain')
+                    if dom not in e2e_runner.DOMAIN_CONFIGS:
+                        raise ValueError(f'Unknown domain: {dom!r}')
+                    if dom not in sessions_by_domain:
+                        sessions_by_domain[dom] = e2e_runner.DemoSession(
+                            session.run_dir.parent / f'{session.run_dir.name}-{dom}',
+                            threshold=session.threshold,
+                            domain=dom,
+                        )
+                    active['domain'] = dom
+                    return self._send(200, {'state': current_session().state()})
                 if self.path == '/api/read':
-                    st = session.execute_read(body['loan_ref'], omit_readback=bool(body.get('omit_readback')))
+                    st = sess.execute_read(body['loan_ref'], omit_readback=bool(body.get('omit_readback')))
                 elif self.path == '/api/propose':
-                    st = session.propose_extension(body['loan_ref'], int(body['days']))
+                    st = sess.propose_extension(body['loan_ref'], int(body['days']))
                 elif self.path == '/api/approve':
-                    st = session.approve_extension(body['pending_id'], tamper_protected_l42=bool(body.get('tamper_l42')))
+                    st = sess.approve_extension(body['pending_id'], tamper_protected_l42=bool(body.get('tamper_l42')))
                 elif self.path == '/api/drift':
-                    st = session.edit_prompt_drift(str(body.get('suffix', ' [edited]')), admit_release=bool(body.get('admit_release', True)))
+                    st = sess.edit_prompt_drift(str(body.get('suffix', ' [edited]')), admit_release=bool(body.get('admit_release', True)))
                 elif self.path == '/api/inject':
-                    st = session.simulate_indirect_injection()
+                    st = sess.simulate_indirect_injection()
                 elif self.path == '/api/reinstate':
-                    st = session.reinstate_remediated_build(str(body.get('approver_alias', 'sec-architect-01')))
+                    st = sess.reinstate_remediated_build(str(body.get('approver_alias', 'sec-architect-01')))
                 elif self.path == '/api/verify-chain':
-                    pub, kid = keys.load_public_key(session.verifier_pub_path)
-                    chain = store.verify_chain(session.ledger_path)
+                    pub, kid = keys.load_public_key(sess.verifier_pub_path)
+                    chain = store.verify_chain(sess.ledger_path)
                     standing = grad.evaluate_standing(
                         chain['receipts'],
-                        active_build_fingerprint=session.active_build_fp,
+                        active_build_fingerprint=sess.active_build_fp,
                         pinned_public_key=pub,
                         pinned_kid=kid,
-                        threshold=session.threshold,
+                        action_classes=tuple(sess.contract['action_classes']),
+                        threshold=sess.threshold,
                     )
                     return self._send(200, {
                         'ok': bool(chain['ok']),
+                        'domain': sess.domain,
                         'entries': chain['entries'],
                         'head_hash': chain['head_hash'],
                         'verifier_kid': kid,
