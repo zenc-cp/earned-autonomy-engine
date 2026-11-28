@@ -1,64 +1,41 @@
 # Earned Autonomy Graduation Engine
 
-A standalone, domain-portable, post-run evidence verification and autonomy-graduation engine for AI agents.
+**A correct read should earn confidence in reads, not permission to write.** The Glass Box is a deterministic local demo of an assistant that can look up a synthetic record or propose a change. An observer reads the system of record after the action. A release reviewer can see what was requested, what the gate allowed, what actually changed, and whether the evidence still applies to this build.
 
-## Why This Exists
+## Try one matched pair
 
-Pre-action gateways and policy engines answer **"Was the agent allowed to attempt this action?"**
-Earned Autonomy answers the missing post-run question: **"Does independent, out-of-band evidence prove the intended system-of-record change happened and protected non-target state stayed untouched — and should this specific action class earn or lose autonomy?"**
+With Python 3.11+ and the dependencies in [requirements.txt](requirements.txt) installed, start in this directory:
 
-## Architecture
-
-![Two-Plane Earned Autonomy Graduation Engine Architecture](docs/architecture.png)
-
-Open the standalone interactive HTML version at [`docs/architecture.html`](docs/architecture.html) (or vector source [`docs/architecture.svg`](docs/architecture.svg)).
-
-## Core Primitives
-
-- **Build Fingerprinting (`fingerprint.py`):** Deterministic `SHA-256(model + instructions + tools + policy)`. Changing a single character in the prompt or adding a tool marks prior `Verified` receipts **`STALE`** and auto-demotes `Tier 2 -> Tier 1`.
-- **Pinned Verifier Key Separation (`keys.py`):** The out-of-band observer signs receipts with `observer.key.pem` (Ed25519); the verifier checks strictly against a pinned `verifier.pub.pem`. Receipts signed by rogue or self-supplied keys fail closed.
-- **Append-Only Hash-Chained Ledger (`store.py`):** Synchronous JSONL ledger where every entry chains `seq`, `prev_hash`, and `entry_hash`. Any single-byte edit, deletion, or reordering fails closed with exit code `2`.
-- **Per-Action-Class Graduation & Sticky Revocation (`graduation.py`):** Each action class (e.g. `read_loan` vs `extend_due_day`) earns its own tier (`Tier 1 -> Tier 2` after `N` consecutive verified+current runs). Passing reads never graduate writes. One protected-state contradiction triggers sticky `Tier 0 (REVOKED / HOLD)` + `global_hold` across all classes until a new remediated build fingerprint and signed `ReinstatementReceipt` are recorded.
-- **Portable Domain Contracts (`contracts.py`):** Ships with `contracts/banking-loan.json` and `contracts/it-access.json` to demonstrate domain independence.
-- **Offline Graduation Desk & Live Local Demo (`cli.py`, `e2e_runner.py`, `live_desk.py`):** Zero-network single-source-of-truth HTML desk and interactive loopback demo on a disposable SQLite ledger.
-
-## Documentation & Demo Guides
-
-- **Architecture Diagram:** [`docs/architecture.html`](docs/architecture.html) · [`docs/architecture.svg`](docs/architecture.svg) · [`docs/architecture.png`](docs/architecture.png)
-- **Operations Runbook:** [`docs/operations-runbook.md`](docs/operations-runbook.md) (onboarding, `STALE` / `Unverified` / `Tier 0 global_hold` response, key rotation)
-- **20-Min Pitch & 10-Min Demo Script:** [`docs/pitch-and-demo-script.md`](docs/pitch-and-demo-script.md)
-
-## Quick Start
-
-Requires Python 3.11+ and `cryptography` (`pip install -r requirements.txt`).
-
-```bash
-# 1. Run the full 16-test verification suite (engine, D01-D07 E2E, hash-chain & IT portability)
-python -B -m unittest -v test_engine test_e2e test_engine_core
-
-# 2. Build the offline single-source Graduation Desk (desk.html)
-python -B cli.py --demo-scenarios --build-desk
-
-# 3. Launch the interactive local end-to-end demo (127.0.0.1:8790)
+```sh
 python -B live_desk.py --port 8790 --open
 ```
 
-### Standalone CLI Engine Workflow
+1. In **Banking / Executive**, choose **PASS: Read L17**, then **BLOCK: Read L42**, then **PASS: Read L17**. The second request is denied. That denial is correct behavior, so the observer credits the **read** class; it reaches 3/3. Writes remain at 0/3.
+2. Choose **Propose +7d on L17**, then **PASS: Approve Clean Commit**. Compare the two ledger rows: L17 advances from day 30 to 37; L42 stays at 90. Proposing alone does not change either row.
+3. Propose once more and select the clearly marked **Tamper L42** fault. This time the bad side effect **happens**. The observer detects it and the engine revokes both classes. Try the same L17 read: this **next** request is blocked. This is detection and containment, not retroactive prevention.
 
-```bash
-python -B cli.py init-key --out-dir ./demo-keys
-python -B cli.py fingerprint --manifest ./fixtures/sample-agent-manifest.json
-python -B cli.py record --key ./demo-keys/observer.key.pem --ledger ./demo.jsonl \
-  --action-class read_loan --verdict verified --protected-ok true --has-readback true --build-fp <SHA256>
-python -B cli.py verify --pubkey ./demo-keys/verifier.pub.pem --ledger ./demo.jsonl \
-  --contract ./contracts/banking-loan.json --active-build-fp <SHA256>
+Use **Technical** to inspect alerts and signed receipts. The displayed `200`, `202`, or `403` is the **modeled action result** (`last_http_status`) in the local desk's API envelope, not necessarily that envelope's HTTP transport status. The client is not a hosted model, a tenant sign-in, or a bank connection. **IT Identity** opens a separate synthetic profile with its own ledger and pinned key. **Reset** starts a new disposable run; it is not incident remediation.
+
+## How it works
+
+![Two-plane reference architecture](docs/architecture.png)
+
+- **Build binding:** [fingerprint.py](fingerprint.py) hashes the model, instructions, tools, and policy. An old build's receipts remain available for audit but do not qualify the new build.
+- **Observed effects:** [e2e_runner.py](e2e_runner.py) owns the local writes. [observer_worker.py](observer_worker.py) checks the target and protected row using a read-only SQLite connection. Observations are Ed25519-signed via [signers.py](signers.py); verification uses the public key, not a key supplied by a receipt. The two processes share a workstation. The file-backed signer is not an HSM, and `KeyVaultSignerStub` deliberately does not sign.
+- **Evidence history:** [store.py](store.py) checks sequence numbers and SHA-256 links. It detects inconsistent entries, not every possible deletion: a valid prefix still verifies without an independently retained head and count. A signature authenticates the signer's statement, not the truth of unobserved effects.
+- **Standing:** [graduation.py](graduation.py) evaluates each action class separately. A missing readback gives no credit; a verified contradiction sets a session-wide hold. Removing that hold requires a different build and a matching signed reinstatement. The evaluator issues no credentials. The local gate reads the result before servicing the next action.
+- **Two contracts:** [banking loans](contracts/banking-loan.json) and [IT temporary access](contracts/it-access.json). The policy is reusable; the adapters, seeded data and invariants are domain-specific.
+
+## Verify or run offline
+
+```sh
+python -B -m unittest -v test_engine test_e2e test_engine_core
+python -B cli.py --demo-scenarios
+python -B cli.py --build-desk
 ```
 
-## Boundaries & Limits
+The Glass Box test set contains 21 tests. [The offline desk](desk.html) is a **replay of bundled synthetic fixtures**, not a new request or a live signature audit. The six scenarios, standings and receipt JSON are embedded at build time. For the persistent CLI, `verify` exit `0` means **no global hold**, not “every receipt passed”; inspect the class reasons and trace. Exit `1` denotes global hold; invalid chain or input/key errors handled by `verify` give exit `2`.
 
-- **Prototype signing boundary:** Local file-backed Ed25519 keys are used for prototype verification. Production deployments require an out-of-band hardware-backed signer (HSM/KMS).
-- **No runtime write authority:** The engine never executes writes or issues runtime credentials; standing is a verifiable governance recommendation for a human release pilot.
+## Presenter and operator material
 
-## License
-
-MIT
+[20-minute pitch and 10-minute walkthrough](docs/pitch-and-demo-script.md) · [Operations runbook](docs/operations-runbook.md) · [Glass Box spec](docs/specs/glass-box-demo-spec.md) · [Design tokens](DESIGN.md) · [Standalone architecture](docs/architecture.html) · [Vector diagram](docs/architecture.svg) · [MIT license](LICENSE)

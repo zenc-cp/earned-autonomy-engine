@@ -1,38 +1,33 @@
-# 20-Minute Executive Pitch & 10-Minute Live Demo Script
+# The Glass Box: 20-minute pitch and 10-minute operator script
 
-**Audience:** Security Architects, CISOs, and Engineering Leaders  
-**Format:** 20-minute pitch + 10-minute live demo + 15-minute Q&A
+**Opening line:** “Alex asks for seven more days. The assistant may propose a change to Alex's loan. Who will check that the bank changed only that loan?” Tell the audience that the client is simulated, the SQLite effects are real inside the demo, and the observer is a separate local process. Never call a recorded run a live customer session.
 
----
+## Pitch clock (proposed, not a timed rehearsal)
 
-## Positioning Statement (The One-Sentence Hook)
-
-> **Earned Autonomy is not another pre-action agent guardrail.** Pre-action gateways (OPA, Cerbos, AGT, APIM) answer *"Was the agent allowed to try?"* Earned Autonomy answers the missing post-run question: *"Does independent, out-of-band evidence prove the intended change happened and protected state stayed untouched — and did this specific build earn or lose its autonomy tier?"*
-
----
-
-## 20-Minute Pitch Arc (8 Beats)
-
-| Time | Beat | Key Message & Evidence |
+| Minutes | Point | What the audience should be able to say |
 |---|---|---|
-| `0:00–2:00` | **The Autonomy Dilemma** | Enterprises are stuck between permanent Human-in-the-Loop (zero ROI) and blind standing trust (one prompt edit or bad write causes silent cross-customer damage). |
-| `2:00–4:30` | **Why Existing Tools Aren't Enough (Market REA)** | Code-level audit of both Microsoft (`agent-governance-toolkit`, `AI-Gateway`) and non-Microsoft peers (`Cerbos`, `OrgKernel`, `Clawvisor`, `aflock`, `Decionis/AgentSafe`): everyone stops at pre-action gating or runtime self-logging. Even `AgentSafe` allows finalization when effect observation is omitted. |
-| `4:30–7:30` | **The Two-Plane Architecture** | Walk through `docs/architecture.png`: Plane 1 (Pre-Action Governance: OBO + Policy + HITL) vs. Plane 2 (Post-Run Independent Verification: Read-Only Observer + Build Fingerprint + Graduation Engine + Human Desk). One-way evidence boundary — zero write credentials in Plane 2. |
-| `7:30–10:30` | **Four Core Primitives** | (1) `SHA-256(model + prompt + tools + policy)` build fingerprinting (`STALE` on 1-char drift); (2) Pinned Ed25519 observer/verifier key separation; (3) Append-only SHA-256 hash-chained ledger; (4) Per-action-class graduation (`read_loan` never graduates `extend_due_day`) + sticky `Tier 0 / global_hold`. |
-| `10:30–13:30` | **Covering All 7 Security Boundaries (D01–D07)** | Show how the single engine covers release admission (`D01`), indirect injection quarantine (`D02`), cross-customer isolation (`D03`), correlated SOC alerts (`D04`), bounded servicing (`D05`), human-before-commit (`D06`), and independent audit reconstruction (`D07`). |
-| `13:30–16:00` | **Cross-Industry Portability** | Same unchanged engine runs `contracts/banking-loan.json` (`L17`/`L42`) and `contracts/it-access.json` (`read_access_profile` / `set_temp_expiry` with privileged group protection). |
-| `16:00–18:00` | **Operations & Trust Boundaries** | Walk through `docs/operations-runbook.md`: how SOC responds to `global_hold`, how a remediated build + signed `ReinstatementReceipt` restores `Tier 1` (never directly `Tier 2`). |
-| `18:00–20:00` | **Honest Limits & Pilot Ask** | Clearly separate what is verified today (16/16 automated tests, live loopback E2E demo, portable CLI) from production requirements (HSM/KMS signer, live Entra delegated binding, Sentinel SIEM ingestion, and uncoached human practitioner trial). |
+| 0–2 | Ask to see your own record, then another person's. | “Both a useful answer and a correct refusal are successes for the control.” |
+| 2–5 | Show a seven-day proposal before and after approval. | “A hold is not a commit. Only the specific record, starting version and change were expected.” |
+| 5–7 | Point to the [architecture](architecture.png): permission is decided before dispatch; the observer checks the effect afterwards. | “Checking the second record matters just as much as checking the first.” |
+| 7–10 | Follow a receipt to the pinned key, active build and class-specific count. | “Read evidence counts towards reads only; it does not issue write permission.” |
+| 10–13 | Contrast an unverified result, a denied request and a detected bad write. | “Missing evidence earns no credit. An unexpected change stops subsequent work.” |
+| 13–16 | Switch to the IT contract. Explain the proposed enterprise placements separately from the local adapter. | “The method travels; the protected invariant must be defined per system.” |
+| 16–18 | Walk the investigation: correlate alert and receipt, inspect the rows, verify the chain, test the next denial. | “A valid signature or chain alone is not a business pass.” |
+| 18–20 | Ask for a nonproduction, read-only pilot and an independent reviewer. | “Three verified current reads are a demo threshold, not an enterprise safety rate. Consequential writes stay human-approved.” |
 
----
+## Run the 10-minute demonstration
 
-## 10-Minute Live Demo Script (`python -B live_desk.py --port 8790 --open`)
+From the Glass Box source directory: `python -B live_desk.py --port 8790 --open`. Start with a fresh disposable **Banking** run in **Executive** view. At 1280×720 the ribbon, transcript, standing and ledger table fit; scroll down for the two approval choices when the inbox opens. Allow 15 minutes after the demo for Q&A. Each button calls a local session action; the ribbon shows the modeled action result, even when the HTTP wrapper itself returns 200.
 
-1. **`0:00–1:00` Baseline:** Show `GLOBAL HOLD: CLEAR`, `Build v1`, `L17` (Day 30 v12) and protected `L42` (Day 90 v5), both action classes at `Tier 1 (0/3)`.
-2. **`1:00–2:30` Scoped Reads & Per-Action Graduation (`D03`):** Click **Read L17 (200)** -> **Read L42 (403 + SOC alert)** -> **Read L17 (200)**. Point out: `read_loan` promotes to **`Tier 2 (Bounded Pilot)` (3/3)** while `extend_due_day` stays isolated at **`Tier 1` (0/3)**.
-3. **`2:30–3:30` Indirect Prompt Injection (`D02`):** Click **Simulate Indirect Injection (D02)**. Show retrieved untrusted note quarantined as data, zero authority granted, `L42` untouched, correlated `D02` SOC alert logged.
-4. **`3:30–4:30` Build Drift (`STALE`):** Click **Edit Prompt (+1 Drift -> STALE)**. Show build SHA change -> `read_loan` immediately marked `STALE` and auto-demoted back to `Tier 1 (0/3)`.
-5. **`4:30–5:30` Unadmitted Release (`D01`):** Click **Stage Unadmitted Build**, then **Read L17**. Show HTTP `403 release_not_admitted` + `D01` SOC alert.
-6. **`5:30–7:30` Governed Write + Protected Tamper -> Sticky Revocation (`D06`/`D04`):** Click **Propose +7d Extension (202 Hold)** -> **Approve + Tamper L42 (Fault Injection)**. Show `L42` caught by read-only observer -> **`GLOBAL HOLD: ACTIVE`**, both classes revoked to **`Tier 0`**, and clicking **Read L17** now returns **HTTP `403 autonomy_revoked_global_hold`** (runtime enforcement!).
-7. **`7:30–9:00` Remediate & Reinstate (`D07`):** Click **Reinstate on New Build (Tier 1)**. Show signed `ReinstatementReceipt` on new build lifting `global_hold` back to **`Tier 1`** (never directly `Tier 2`). Expand **Raw Ed25519-Signed Receipts** and **Correlated SOC Alerts**.
-8. **`9:00–10:00` CLI Portability Proof:** Run `python -B -m unittest -v test_engine_core` in terminal to show hash-chain tamper detection (exit `2`) and the same engine evaluating `contracts/it-access.json` (exit `1` on hold -> exit `0` after reinstatement).
+| Time | Action on screen | Check before moving on |
+|---|---|---|
+| 0:00–1:00 | Point to L17 (day 30 / v12) and protected L42 (day 90 / v5). Ask which row the customer may see. | The client is labeled **Deterministic Local API**. No change is pending; both classes are at Tier 1. |
+| 1:00–2:30 | **PASS: Read L17** → **BLOCK: Read L42** → **PASS: Read L17**. | The second turn is a blocked request and a **verified denial**. Reads reach 3/3; writes stay 0/3. |
+| 2:30–4:00 | **Propose +7d on L17**. Pause on the approver inbox. Choose **PASS: Approve Clean Commit**. | Before approval: unchanged. After: L17 30→37 / v12→13, L42 still 90 / v5. This is the successful write path. |
+| 4:00–5:15 | **BLOCK: Prompt Injection**. Contrast with the ordinary read. Choose **Edit Prompt (STALE)**. | The fixed unsafe-note fixture grants no authority. After drift, earlier qualifying reads no longer support Tier 2. This does not test arbitrary prompts. |
+| 5:15–6:15 | **BLOCK: Unadmitted Build** → **PASS: Read L17** → **PASS: Admit Build** → **PASS: Read L17**. | Staging alone is not the refusal: an actual attempted read must show `release_not_admitted`. Admission restores servicing, not a prior streak. |
+| 6:15–7:45 | **Propose +7d** again. Choose **BLOCK/REVOKE: Tamper L42** in the inbox. Then try **PASS: Read L17**. | The faulty commit advanced L17 to 44 and changed L42 to 91. The observer detects it; the *next* read is blocked at the gate. Do not describe this as rollback. |
+| 7:45–9:00 | Open **Technical**; inspect the critical local alert and matching signed observation. Check **Verify Chain Integrity**. Select **Reinstate → Tier 1**. | A structurally valid chain can contain a recorded failure. The demo restores the protected row and signs a new-build reinstatement; it does not erase the incident or grant Tier 2. |
+| 9:00–10:00 | Select **IT Identity**. Use **PASS: Read CONT-17** and **BLOCK: Read ADMIN-42**. | Different targets, action classes and key; no banking streak transfers. Leave one sentence for the decision: pilot reads, not writes. |
+
+If time is short, keep the matched reads, the clean commit, the contradiction and the blocked next call; omit the other fault fixtures. If the server is unavailable, open the [offline replay](../desk.html) and say “recorded scenarios”. Without Wi-Fi the local live desk still works once dependencies are installed. Do not reset a held run to imply recovery. No hosted LLM, cloud identity, external SIEM, or HSM is required by this script.

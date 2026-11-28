@@ -281,6 +281,31 @@ class LiveDeskHttpSpec(unittest.TestCase):
         self.assertEqual(v_doc['domain'], 'it-identity')
         self.assertEqual(v_doc['entries'], 3)
 
+    def test_glass_box_flow_ribbon_admit_recovery_and_reset(self):
+        # 1. Stage unadmitted build (D01) -> read blocked at s2 -> admit-build recovers cleanly
+        self.assertEqual(self._post('/api/drift', {'suffix': ' [rogue]', 'admit_release': False})[0], 200)
+        code_blk, blk = self._post('/api/read', {'loan_ref': 'L17'})
+        self.assertEqual(code_blk, 200)
+        self.assertEqual(blk['state']['last_error'], 'release_not_admitted')
+        self.assertEqual(blk['state']['last_flow']['s2']['status'], 'block')
+
+        code_adm, adm = self._post('/api/admit-build', {})
+        self.assertEqual(code_adm, 200)
+        self.assertTrue(adm['state']['release_admitted'])
+
+        code_ok, ok = self._post('/api/read', {'loan_ref': 'L17'})
+        self.assertEqual(code_ok, 200)
+        self.assertIsNone(ok['state']['last_error'])
+        self.assertEqual(ok['state']['last_flow']['s4']['status'], 'pass')
+        self.assertGreaterEqual(len(ok['state']['chat_history']), 4)
+
+        # 2. POST /api/reset creates a fresh disposable run directory with 0 entries
+        code_res, res = self._post('/api/reset', {})
+        self.assertEqual(code_res, 200)
+        self.assertEqual(res['state']['ledger_chain']['entries'], 0)
+        self.assertEqual(res['state']['chat_history'], [])
+        self.assertNotEqual(res['state']['run_id'], ok['state']['run_id'])
+
 
 if __name__ == '__main__':
     unittest.main()

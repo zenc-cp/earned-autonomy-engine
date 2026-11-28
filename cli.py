@@ -155,47 +155,74 @@ def build_scenarios() -> dict:
 
 
 DESK_TEMPLATE = """<!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; object-src 'none'">
-<title>Earned Autonomy | Graduation Desk (Offline Prototype)</title>
+<title>Earned Autonomy | Graduation Desk (Offline Single-Source)</title>
 <style>
-  :root { color-scheme: light; --paper:#f5f5f5; --card:#fff; --ink:#2d3142; --muted:#4f5d75; --soft:#5a6580; --rule:rgba(45,49,66,0.14); --accent:#bf4520; --ok:#166534; --warn:#92400e; --bad:#991b1b; --mono:ui-monospace,Consolas,monospace; }
+  :root, [data-theme="light"] {
+    color-scheme: light;
+    --bg:#f7f6f2; --surf:#ffffff; --surf2:#f0efe9; --ink:#141923; --muted:#475467; --soft:#667085;
+    --rule:rgba(20,25,35,0.12); --prim:#1d4ed8; --prim-ink:#ffffff;
+    --ok:#15803d; --ok-bg:#dcfce7; --warn:#b45309; --warn-bg:#fef3c7; --bad:#b91c1c; --bad-bg:#fee2e2;
+    --shadow:0 1px 2px rgba(20,25,35,0.05); --mono:ui-monospace,'Cascadia Mono',Consolas,monospace;
+  }
+  [data-theme="dark"] {
+    color-scheme: dark;
+    --bg:#10141b; --surf:#171d26; --surf2:#202834; --ink:#eef2f6; --muted:#a5b1c2; --soft:#7e8b9d;
+    --rule:rgba(238,242,246,0.13); --prim:#60a5fa; --prim-ink:#09111c;
+    --ok:#4ade80; --ok-bg:rgba(74,222,128,0.14); --warn:#fbbf24; --warn-bg:rgba(251,191,36,0.14); --bad:#f87171; --bad-bg:rgba(248,113,113,0.16);
+    --shadow:0 1px 2px rgba(0,0,0,0.25);
+  }
   * { box-sizing:border-box; margin:0; padding:0; }
-  body { background:var(--paper); color:var(--ink); font:15px/1.5 system-ui,-apple-system,'Segoe UI',sans-serif; padding:28px 20px 44px; }
-  main { max-width:1040px; margin:0 auto; }
-  .eyebrow { font:600 11px/1.4 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin-bottom:6px; }
-  h1 { font-size:28px; line-height:1.18; letter-spacing:-.02em; margin-bottom:6px; }
+  body { background:var(--bg); color:var(--ink); font:15px/1.55 system-ui,-apple-system,'Segoe UI',sans-serif; padding:26px 18px 48px; }
+  main { max-width:1080px; margin:0 auto; }
+  .head { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; padding-bottom:16px; border-bottom:1px solid var(--rule); margin-bottom:18px; }
+  .eyebrow { font:600 11px/1.3 var(--mono); letter-spacing:.13em; text-transform:uppercase; color:var(--soft); margin-bottom:4px; }
+  h1 { font-size:clamp(1.3rem,2.4vw,1.75rem); line-height:1.18; letter-spacing:-.02em; }
   .lead { color:var(--muted); max-width:78ch; margin-bottom:16px; }
-  .tabs { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:18px; padding:10px 0; border-block:1px solid var(--rule); }
-  button.tab { font:600 12px/1.3 var(--mono); padding:8px 12px; border:1px solid var(--rule); border-radius:4px; background:var(--card); color:var(--ink); cursor:pointer; }
-  button.tab[aria-selected="true"] { background:var(--ink); color:#fff; border-color:var(--ink); }
-  button.tab:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
-  .banner { background:var(--card); border:1px solid var(--rule); border-left:4px solid var(--accent); border-radius:4px; padding:12px 14px; margin-bottom:16px; }
-  .banner strong { display:block; font-size:15px; margin-bottom:4px; }
-  .grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:16px; }
-  .panel { background:var(--card); border:1px solid var(--rule); border-radius:6px; padding:14px 16px; }
-  .panel h2 { font:600 11px/1.4 var(--mono); letter-spacing:.12em; text-transform:uppercase; color:var(--soft); margin-bottom:8px; }
-  .tier { font-size:19px; font-weight:700; margin-bottom:6px; }
+  .theme-btn { font:600 12px/1.2 var(--mono); padding:7px 11px; border:1px solid var(--rule); border-radius:6px; background:var(--surf); color:var(--muted); cursor:pointer; }
+  .tabs { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:18px; }
+  button.tab { font:600 12px/1.25 var(--mono); padding:8px 12px; border:1px solid var(--rule); border-radius:6px; background:var(--surf); color:var(--muted); cursor:pointer; }
+  button.tab[aria-selected="true"] { background:var(--ink); color:var(--bg); border-color:var(--ink); }
+  button.tab:focus-visible, .theme-btn:focus-visible { outline:2px solid var(--prim); outline-offset:2px; }
+  .banner { background:var(--surf); border:1px solid var(--rule); border-radius:8px; padding:16px 18px; margin-bottom:16px; box-shadow:var(--shadow); }
+  .banner-head { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:6px; }
+  .banner strong { font-size:16px; }
+  .hold-pill { display:inline-flex; align-items:center; gap:6px; font:700 11px/1.2 var(--mono); padding:5px 10px; border-radius:999px; }
+  .hold-pill::before { content:""; width:7px; height:7px; border-radius:50%; background:currentColor; }
+  .hold-on { background:var(--bad-bg); color:var(--bad); }
+  .hold-off { background:var(--ok-bg); color:var(--ok); }
+  .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin-bottom:18px; }
+  .panel { background:var(--surf); border:1px solid var(--rule); border-radius:8px; padding:18px 20px; box-shadow:var(--shadow); }
+  .panel-head { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px; }
+  .pill { font:700 10.5px/1.2 var(--mono); padding:3px 8px; border-radius:4px; text-transform:uppercase; }
+  .pill-ok { background:var(--ok-bg); color:var(--ok); } .pill-warn { background:var(--warn-bg); color:var(--warn); } .pill-bad { background:var(--bad-bg); color:var(--bad); }
+  .tier { font-size:21px; font-weight:700; letter-spacing:-.015em; margin-bottom:10px; }
   .tier.t2 { color:var(--ok); } .tier.t1 { color:var(--warn); } .tier.t0 { color:var(--bad); }
-  .meta { font:12px/1.6 var(--mono); color:var(--muted); }
-  .hold-pill { display:inline-block; font:700 11px/1.2 var(--mono); padding:3px 7px; border-radius:3px; margin-bottom:10px; }
-  .hold-on { background:#fee2e2; color:var(--bad); border:1px solid #fecaca; }
-  .hold-off { background:#dcfce7; color:var(--ok); border:1px solid #bbf7d0; }
-  details { background:var(--card); border:1px solid var(--rule); border-radius:6px; padding:10px 14px; margin-top:12px; }
+  .meter { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-bottom:10px; }
+  .meter-seg { height:7px; border-radius:999px; background:var(--surf2); }
+  .meter-seg.ok { background:var(--ok); } .meter-seg.warn { background:var(--warn); } .meter-seg.bad { background:var(--bad); }
+  .meta { font:12.5px/1.55 var(--mono); color:var(--muted); }
+  details { background:var(--surf); border:1px solid var(--rule); border-radius:8px; padding:12px 16px; margin-top:12px; }
   summary { cursor:pointer; font:600 12px/1.4 var(--mono); color:var(--ink); }
-  pre { margin-top:10px; padding:10px; background:#f0f1f4; border-radius:4px; overflow-x:auto; font:12px/1.45 var(--mono); color:var(--ink); }
-  footer { margin-top:20px; padding-top:10px; border-top:1px solid var(--rule); font-size:12px; color:var(--soft); }
-  @media (max-width:720px) { .grid { grid-template-columns:1fr; } }
+  pre { margin-top:10px; padding:12px; background:var(--surf2); border:1px solid var(--rule); border-radius:6px; overflow-x:auto; font:12px/1.45 var(--mono); color:var(--ink); }
+  footer { margin-top:24px; padding-top:12px; border-top:1px solid var(--rule); font-size:12px; color:var(--soft); }
+  @media (max-width:740px) { .grid { grid-template-columns:1fr; } }
 </style>
 </head>
 <body>
 <main>
-  <p class="eyebrow">Earned Autonomy Graduation Engine · Offline Single-Source Renderer</p>
-  <h1>Per-Action Autonomy Standing &amp; Signed Receipts</h1>
-  <p class="lead">Every standing below was computed by <code>graduation.py</code> from Ed25519-signed receipts and embedded verbatim at build time. This page runs no network calls and holds zero write credentials.</p>
+  <header class="head">
+    <div>
+      <p class="eyebrow">Earned Autonomy · Offline Single-Source Graduation Desk</p>
+      <h1>Per-Action Autonomy Standing &amp; Signed Receipts</h1>
+    </div>
+    <button type="button" id="btn-theme" class="theme-btn">Dark</button>
+  </header>
+  <p class="lead">Every standing below was computed by <code>graduation.py</code> from Ed25519-signed receipts and embedded verbatim at build time. Zero network calls, zero duplicated JS state-machine logic, zero write credentials.</p>
   <div id="tabs" class="tabs" role="tablist" aria-label="Governance scenarios"></div>
   <div id="view"></div>
   <footer><strong id="notice"></strong> · Built offline from Python engine output; never authorizes live banking or tenant mutations.</footer>
@@ -208,24 +235,40 @@ document.getElementById('notice').textContent = bundle.key_notice;
 const tabsEl = document.getElementById('tabs');
 const viewEl = document.getElementById('view');
 function tierClass(t) { return t.startsWith('Tier 2') ? 't2' : t.startsWith('Tier 0') ? 't0' : 't1'; }
-function render(idx) {
+function render(idx, syncUrl) {
   const sc = bundle.scenarios[idx], st = sc.standing;
   for (const b of tabsEl.querySelectorAll('button.tab')) b.setAttribute('aria-selected', String(Number(b.dataset.idx) === idx));
+  if (syncUrl && location.protocol !== 'about:') {
+    try { const u = new URL(location.href); u.searchParams.set('scenario', sc.id); history.replaceState(null, '', u); } catch {}
+  }
   viewEl.replaceChildren();
   const banner = document.createElement('div'); banner.className = 'banner';
-  const hold = document.createElement('span'); hold.className = 'hold-pill ' + (st.global_hold ? 'hold-on' : 'hold-off');
-  hold.textContent = st.global_hold ? 'GLOBAL HOLD: ACTIVE (ALL CLASSES REVOKED)' : 'GLOBAL HOLD: CLEAR';
+  const bHead = document.createElement('div'); bHead.className = 'banner-head';
   const title = document.createElement('strong'); title.textContent = sc.label;
-  const p = document.createElement('p'); p.textContent = sc.summary;
-  banner.append(hold, title, p); viewEl.append(banner);
+  const hold = document.createElement('span'); hold.className = 'hold-pill ' + (st.global_hold ? 'hold-on' : 'hold-off');
+  hold.textContent = st.global_hold ? 'GLOBAL HOLD · ALL REVOKED' : 'SYSTEM STANDING · CLEAR';
+  bHead.append(title, hold);
+  const p = document.createElement('p'); p.textContent = sc.summary; p.style.color = 'var(--muted)';
+  banner.append(bHead, p); viewEl.append(banner);
   const grid = document.createElement('div'); grid.className = 'grid';
   for (const [clsName, info] of Object.entries(st.classes)) {
     const card = document.createElement('section'); card.className = 'panel';
-    const h2 = document.createElement('h2'); h2.textContent = 'Action Class · ' + clsName;
+    const isT0 = info.tier.startsWith('Tier 0'), isT2 = info.tier.startsWith('Tier 2');
+    const pHead = document.createElement('div'); pHead.className = 'panel-head';
+    const h2 = document.createElement('span'); h2.className = 'eyebrow'; h2.textContent = 'Action Class · ' + clsName;
+    const badge = document.createElement('span'); badge.className = 'pill ' + (isT0 ? 'pill-bad' : (isT2 ? 'pill-ok' : 'pill-warn'));
+    badge.textContent = isT0 ? 'REVOKED' : info.currency;
+    pHead.append(h2, badge);
     const t = document.createElement('div'); t.className = 'tier ' + tierClass(info.tier); t.textContent = info.tier;
+    const meter = document.createElement('div'); meter.className = 'meter';
+    const filled = isT0 ? st.threshold : Math.min(st.threshold, info.consecutive_verified);
+    const segCls = isT0 ? 'bad' : (isT2 ? 'ok' : 'warn');
+    for (let i = 0; i < st.threshold; i++) {
+      const seg = document.createElement('div'); seg.className = 'meter-seg' + (i < filled ? ' ' + segCls : ''); meter.append(seg);
+    }
     const m = document.createElement('div'); m.className = 'meta';
-    m.textContent = `Streak: ${info.consecutive_verified}/${st.threshold}  |  Currency: ${info.currency}  |  Reason: ${info.demotion_reason || 'none'}`;
-    card.append(h2, t, m); grid.append(card);
+    m.textContent = `Streak: ${info.consecutive_verified}/${st.threshold}  ·  Currency: ${info.currency}  ·  Reason: ${info.demotion_reason || 'none'}`;
+    card.append(pHead, t, meter, m); grid.append(card);
   }
   viewEl.append(grid);
   const d1 = document.createElement('details'), s1 = document.createElement('summary'), pre1 = document.createElement('pre');
@@ -236,9 +279,17 @@ function render(idx) {
 }
 bundle.scenarios.forEach((sc, idx) => {
   const b = document.createElement('button'); b.type = 'button'; b.className = 'tab'; b.role = 'tab';
-  b.dataset.idx = String(idx); b.textContent = sc.label; b.onclick = () => render(idx); tabsEl.append(b);
+  b.dataset.idx = String(idx); b.textContent = sc.label; b.onclick = () => render(idx, true); tabsEl.append(b);
 });
-render(0);
+document.getElementById('btn-theme').onclick = () => {
+  const html = document.documentElement;
+  const next = html.dataset.theme === 'dark' ? 'light' : 'dark';
+  html.dataset.theme = next;
+  document.getElementById('btn-theme').textContent = next === 'dark' ? 'Light' : 'Dark';
+};
+const q = new URLSearchParams(location.search).get('scenario');
+const startIdx = Math.max(0, bundle.scenarios.findIndex(s => s.id === q));
+render(startIdx, false);
 </script>
 </body>
 </html>

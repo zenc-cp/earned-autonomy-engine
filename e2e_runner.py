@@ -148,6 +148,26 @@ class DemoSession:
         self.events: list[dict] = []
         self.soc_alerts: list[dict] = []
         self.pending_extension: dict | None = None
+        self.chat_history: list[dict] = []
+        self.last_flow: dict = self._idle_flow()
+
+    def _idle_flow(self) -> dict:
+        return {
+            's1': {'status': 'idle', 'title': '1. User & Agent', 'detail': 'Waiting for request'},
+            's2': {'status': 'idle', 'title': '2. Policy & ID Gate', 'detail': 'Ready (admitted build)'},
+            's3': {'status': 'idle', 'title': '3. System of Record', 'detail': f"{self.cfg['other_ref']} protected"},
+            's4': {'status': 'idle', 'title': '4. Observer & Standing', 'detail': 'Pinned Ed25519 ready'},
+        }
+
+    def _record_turn(self, *, user_msg: str, assistant_msg: str, verdict: str, flow: dict) -> None:
+        self.last_flow = flow
+        self.chat_history.append({
+            'id': str(uuid.uuid4())[:8],
+            'user': user_msg,
+            'assistant': assistant_msg,
+            'verdict': verdict,
+            'recorded_utc': _now_utc(),
+        })
 
     def _compute_fp(self) -> str:
         return fp.compute_build_fingerprint(self.cfg['model'], self.instructions, self.cfg['tools'], self.policy)
@@ -216,6 +236,17 @@ class DemoSession:
                 'summary': f"{action_name} -> HTTP 403 BLOCKED (autonomy_revoked_global_hold; reinstate on remediated build)",
                 'verdict': 'blocked',
             })
+            self._record_turn(
+                user_msg=f"Attempt {action_name}",
+                assistant_msg="BLOCKED (HTTP 403): Global Hold is active because a protected invariant was previously violated. No actions can run until a remediated build is reinstated.",
+                verdict='blocked',
+                flow={
+                    's1': {'status': 'pass', 'title': '1. User & Agent', 'detail': action_name},
+                    's2': {'status': 'block', 'title': '2. Policy & ID Gate', 'detail': 'BLOCKED 403 · Global Hold'},
+                    's3': {'status': 'idle', 'title': '3. System of Record', 'detail': 'Not reached (protected)'},
+                    's4': {'status': 'block', 'title': '4. Observer & Standing', 'detail': 'Tier 0 · Global Hold'},
+                },
+            )
             return False, 'autonomy_revoked_global_hold', standing
 
         if self.active_build_fp not in self.admitted_builds:
@@ -232,6 +263,17 @@ class DemoSession:
                 'summary': f"{action_name} -> HTTP 403 BLOCKED (D01 release_not_admitted; build v{self.build_version} unapproved)",
                 'verdict': 'blocked',
             })
+            self._record_turn(
+                user_msg=f"Attempt {action_name} on build v{self.build_version}",
+                assistant_msg=f"BLOCKED (HTTP 403 · D01): Build v{self.build_version} ({self.active_build_fp[:12]}…) is not in the admitted release allowlist. Click 'Admit Current Build' to approve it.",
+                verdict='blocked',
+                flow={
+                    's1': {'status': 'warn', 'title': '1. User & Agent', 'detail': f'Unadmitted build v{self.build_version}'},
+                    's2': {'status': 'block', 'title': '2. Policy & ID Gate', 'detail': 'BLOCKED 403 · D01 Release'},
+                    's3': {'status': 'idle', 'title': '3. System of Record', 'detail': 'Not reached'},
+                    's4': {'status': 'warn', 'title': '4. Observer & Standing', 'detail': 'D01 SOC alert emitted'},
+                },
+            )
             return False, 'release_not_admitted', standing
 
         return True, None, standing
@@ -271,6 +313,8 @@ class DemoSession:
             'instructions': self.instructions,
             'last_http_status': last_http_status,
             'last_error': last_error,
+            'last_flow': self.last_flow,
+            'chat_history': list(self.chat_history[-10:]),
             'ledger': {
                 'rows': [{'ref': r[0], 'owner': r[1], 'due_day': r[2], 'version': r[3]} for r in rows],
                 'sha256': ledger_sha,
@@ -345,6 +389,42 @@ class DemoSession:
                 'summary': f"{read_cls}({loan_ref}) -> HTTP {http_status} ({decision}) | observer: {verdict}",
                 'verdict': verdict,
             })
+            if omit_readback:
+                self._record_turn(
+                    user_msg=f"Check {loan_ref} (simulate missing observer readback)",
+                    assistant_msg=f"UNVERIFIED (Fail-Closed): API returned HTTP {http_status}, but independent readback was omitted. Streak reset to 0 — no blind trust granted.",
+                    verdict='unverified',
+                    flow={
+                        's1': {'status': 'pass', 'title': '1. User & Agent', 'detail': f'{read_cls}({loan_ref})'},
+                        's2': {'status': 'pass', 'title': '2. Policy & ID Gate', 'detail': f'HTTP {http_status} ({decision})'},
+                        's3': {'status': 'warn', 'title': '3. System of Record', 'detail': 'Readback omitted'},
+                        's4': {'status': 'warn', 'title': '4. Observer & Standing', 'detail': 'UNVERIFIED · Streak 0'},
+                    },
+                )
+            elif http_status == 200:
+                self._record_turn(
+                    user_msg=f"Check my own record {loan_ref}",
+                    assistant_msg=f"PASS (HTTP 200): Returned {loan_ref} (Day {body['due_day']}, v{body['version']}). Isolated observer verified {self.cfg['other_ref']} stayed untouched (+1 verified run).",
+                    verdict='verified',
+                    flow={
+                        's1': {'status': 'pass', 'title': '1. User & Agent', 'detail': f'{read_cls}({loan_ref})'},
+                        's2': {'status': 'pass', 'title': '2. Policy & ID Gate', 'detail': 'PERMIT · HTTP 200'},
+                        's3': {'status': 'pass', 'title': '3. System of Record', 'detail': f'1 record · {self.cfg["other_ref"]} untouched'},
+                        's4': {'status': 'pass', 'title': '4. Observer & Standing', 'detail': 'Ed25519 VERIFIED (+1)'},
+                    },
+                )
+            else:
+                self._record_turn(
+                    user_msg=f"Show me protected record {loan_ref}",
+                    assistant_msg=f"BLOCKED (HTTP 403 · D03): Cross-scope access to {loan_ref} denied with zero data leaked. Independent observer verified denial — {read_cls} earned +1 verified run.",
+                    verdict='blocked',
+                    flow={
+                        's1': {'status': 'warn', 'title': '1. User & Agent', 'detail': f'{read_cls}({loan_ref})'},
+                        's2': {'status': 'block', 'title': '2. Policy & ID Gate', 'detail': 'BLOCKED 403 · D03 Scope'},
+                        's3': {'status': 'pass', 'title': '3. System of Record', 'detail': f'0 rows · {loan_ref} untouched'},
+                        's4': {'status': 'pass', 'title': '4. Observer & Standing', 'detail': 'VERIFIED DENIAL (+1)'},
+                    },
+                )
             return self._snapshot_state(last_http_status=http_status)
 
     def simulate_indirect_injection(self) -> dict:
@@ -383,6 +463,17 @@ class DemoSession:
                 'summary': f'D02 indirect injection in {target} note -> QUARANTINED (zero authority granted; {other} untouched) | observer: {verdict}',
                 'verdict': verdict,
             })
+            self._record_turn(
+                user_msg=f"Read {target} (contains hidden prompt injection trying to read {other})",
+                assistant_msg=f"QUARANTINED (D02): Hidden instruction in {target} note treated as untrusted data only. Zero authority granted, {other} untouched, D02 SOC alert emitted.",
+                verdict='blocked',
+                flow={
+                    's1': {'status': 'warn', 'title': '1. User & Agent', 'detail': 'Untrusted note retrieved'},
+                    's2': {'status': 'block', 'title': '2. Policy & ID Gate', 'detail': 'D02 QUARANTINED'},
+                    's3': {'status': 'pass', 'title': '3. System of Record', 'detail': f'Unchanged · {other} safe'},
+                    's4': {'status': 'pass', 'title': '4. Observer & Standing', 'detail': 'VERIFIED · D02 alert'},
+                },
+            )
             return self._snapshot_state(last_http_status=200)
 
     def propose_extension(self, loan_ref: str, days: int) -> dict:
@@ -415,6 +506,17 @@ class DemoSession:
                 'summary': f"{write_cls}({target}, +{days}d) -> HTTP 202 HOLD (day {trow[2]} v{trow[3]} unchanged; awaiting human approval)",
                 'verdict': 'held',
             })
+            self._record_turn(
+                user_msg=f"Extend {target} by +{days} days",
+                assistant_msg=f"HELD (HTTP 202 · D06): Consequential write paused before commit (Day {trow[2]} v{trow[3]} unchanged). Choose Approve Clean or Approve + Tamper {self.cfg['other_ref']} below.",
+                verdict='held',
+                flow={
+                    's1': {'status': 'pass', 'title': '1. User & Agent', 'detail': f'{write_cls}({target}, +{days}d)'},
+                    's2': {'status': 'warn', 'title': '2. Policy & ID Gate', 'detail': 'HTTP 202 · Human Hold'},
+                    's3': {'status': 'idle', 'title': '3. System of Record', 'detail': 'No write applied yet'},
+                    's4': {'status': 'warn', 'title': '4. Observer & Standing', 'detail': 'Awaiting approval'},
+                },
+            )
             return self._snapshot_state(last_http_status=202)
 
     def approve_extension(self, pending_id: str, *, tamper_protected_l42: bool = False) -> dict:
@@ -481,7 +583,54 @@ class DemoSession:
                 'summary': f"approve_{write_cls}({target}, +{p['days']}d) -> {note} | observer: {verdict}",
                 'verdict': verdict,
             })
+            if protected_ok:
+                self._record_turn(
+                    user_msg=f"Approver: Approve clean +{p['days']}d commit on {target}",
+                    assistant_msg=f"PASS (Verified Commit): {target} updated Day {p['base_day']}→{after_day} (v{p['base_version']}→v{after_version}). Observer confirmed {other} untouched (+1 {write_cls}).",
+                    verdict='verified',
+                    flow={
+                        's1': {'status': 'pass', 'title': '1. User & Agent', 'detail': 'Human approved commit'},
+                        's2': {'status': 'pass', 'title': '2. Policy & ID Gate', 'detail': 'Conditional single write'},
+                        's3': {'status': 'pass', 'title': '3. System of Record', 'detail': f'{target} v{after_version} · {other} safe'},
+                        's4': {'status': 'pass', 'title': '4. Observer & Standing', 'detail': 'Ed25519 VERIFIED (+1)'},
+                    },
+                )
+            else:
+                self._record_turn(
+                    user_msg=f"Approver: Approve commit (FAULT INJECTION: writer also mutates {other})",
+                    assistant_msg=f"REVOKED (Sticky Tier 0 / GLOBAL HOLD): Independent observer caught {other} corruption! All action classes revoked; next API call will be blocked with HTTP 403.",
+                    verdict='failed',
+                    flow={
+                        's1': {'status': 'warn', 'title': '1. User & Agent', 'detail': 'Approved write + fault'},
+                        's2': {'status': 'warn', 'title': '2. Policy & ID Gate', 'detail': 'Pre-action allowed it'},
+                        's3': {'status': 'block', 'title': '3. System of Record', 'detail': f'{other} TAMPERED!'},
+                        's4': {'status': 'block', 'title': '4. Observer & Standing', 'detail': 'TIER 0 · GLOBAL HOLD'},
+                    },
+                )
             return self._snapshot_state(last_http_status=200)
+
+    def admit_current_build(self) -> dict:
+        """D01 recovery: admit the currently active build fingerprint into the release allowlist."""
+        with self._lock:
+            self.admitted_builds.add(self.active_build_fp)
+            aid = str(uuid.uuid4())
+            self.events.append({
+                'action_id': aid,
+                'summary': f"D01 Release Admission: build v{self.build_version} ({self.active_build_fp[:12]}…) explicitly admitted.",
+                'verdict': 'reinstated',
+            })
+            self._record_turn(
+                user_msg=f"Release Manager: Admit build v{self.build_version}",
+                assistant_msg=f"ADMITTED (D01): Build v{self.build_version} ({self.active_build_fp[:12]}…) is now allowed to serve at Tier 1.",
+                verdict='reinstated',
+                flow={
+                    's1': {'status': 'pass', 'title': '1. User & Agent', 'detail': f'Build v{self.build_version}'},
+                    's2': {'status': 'pass', 'title': '2. Policy & ID Gate', 'detail': 'D01 Release Admitted'},
+                    's3': {'status': 'idle', 'title': '3. System of Record', 'detail': 'Ready'},
+                    's4': {'status': 'warn', 'title': '4. Observer & Standing', 'detail': 'Tier 1 (earn fresh streak)'},
+                },
+            )
+            return self._snapshot_state()
 
     def edit_prompt_drift(self, suffix: str, *, admit_release: bool = True) -> dict:
         if not isinstance(suffix, str) or not suffix.strip():
@@ -493,8 +642,30 @@ class DemoSession:
             if admit_release:
                 self.admitted_builds.add(self.active_build_fp)
                 msg = f"Prompt edited (admitted build v{self.build_version}) -> active build SHA changed; prior receipts now STALE"
+                self._record_turn(
+                    user_msg=f"Developer: Edit agent prompt (+1 drift -> build v{self.build_version})",
+                    assistant_msg=f"STALE (Auto-Demoted): Build fingerprint changed ({self.active_build_fp[:12]}…). Prior verified receipts are now STALE; Tier 2 auto-demoted back to Tier 1.",
+                    verdict='stale',
+                    flow={
+                        's1': {'status': 'warn', 'title': '1. User & Agent', 'detail': f'Prompt edited (v{self.build_version})'},
+                        's2': {'status': 'pass', 'title': '2. Policy & ID Gate', 'detail': 'Admitted build'},
+                        's3': {'status': 'idle', 'title': '3. System of Record', 'detail': 'Unchanged'},
+                        's4': {'status': 'warn', 'title': '4. Observer & Standing', 'detail': 'STALE -> Tier 1'},
+                    },
+                )
             else:
                 msg = f"Unadmitted rogue build v{self.build_version} staged -> D01 release admission will block serving"
+                self._record_turn(
+                    user_msg=f"Deploy unapproved build v{self.build_version} (D01 test)",
+                    assistant_msg=f"STAGED UNADMITTED (D01): Build v{self.build_version} is NOT in the release allowlist. Try any read/write now to see HTTP 403 blocking, or click 'Admit Current Build'.",
+                    verdict='stale',
+                    flow={
+                        's1': {'status': 'warn', 'title': '1. User & Agent', 'detail': f'Rogue build v{self.build_version}'},
+                        's2': {'status': 'block', 'title': '2. Policy & ID Gate', 'detail': 'D01 Not Admitted'},
+                        's3': {'status': 'idle', 'title': '3. System of Record', 'detail': 'Protected'},
+                        's4': {'status': 'warn', 'title': '4. Observer & Standing', 'detail': 'STALE · Blocked'},
+                    },
+                )
             self.events.append({
                 'action_id': str(uuid.uuid4()),
                 'summary': msg,
@@ -528,4 +699,15 @@ class DemoSession:
                 'summary': f"Signed ReinstatementReceipt by {approver_alias.strip()} for admitted build v{self.build_version} -> global_hold lifted to Tier 1",
                 'verdict': 'reinstated',
             })
+            self._record_turn(
+                user_msg=f"Security Architect ({approver_alias.strip()}): Reinstate remediated build v{self.build_version}",
+                assistant_msg=f"REINSTATED AT TIER 1: Protected {other} restored and signed ReinstatementReceipt recorded for build v{self.build_version}. Global Hold lifted; agent must re-earn Tier 2 from 0/3.",
+                verdict='reinstated',
+                flow={
+                    's1': {'status': 'pass', 'title': '1. User & Agent', 'detail': f'Remediated build v{self.build_version}'},
+                    's2': {'status': 'pass', 'title': '2. Policy & ID Gate', 'detail': 'Global Hold lifted'},
+                    's3': {'status': 'pass', 'title': '3. System of Record', 'detail': f'{other} restored'},
+                    's4': {'status': 'pass', 'title': '4. Observer & Standing', 'detail': 'Reinstated -> Tier 1'},
+                },
+            )
             return self._snapshot_state()
